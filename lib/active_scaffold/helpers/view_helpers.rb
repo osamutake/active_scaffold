@@ -126,6 +126,9 @@ module ActiveScaffold
 
       def column_empty?(column_value)
         empty = column_value.nil?
+        # column_value != false would force boolean to be cast to integer
+        # when comparing to column_value of IPAddr class (PostgreSQL inet column type)
+        # rubocop:disable Style/YodaCondition
         empty ||= false != column_value && column_value.blank?
         empty ||= ['&nbsp;', empty_field_text].include? column_value if column_value.is_a? String
         empty
@@ -165,6 +168,19 @@ module ActiveScaffold
             method = override_helper_name(column, suffix)
             method if respond_to?(method)
           end
+        end
+      end
+
+      def history_state
+        if active_scaffold_config.store_user_settings
+          state = {page: @page.try(:number)}
+          if active_scaffold_config.list.user.sorting.size == 1
+            column, state[:sort_direction] = active_scaffold_config.list.user.sorting.first
+            state[:sort] = column.name
+          end
+          state
+        else
+          {}
         end
       end
 

@@ -169,13 +169,17 @@ module ActiveScaffold
         column_options = active_scaffold_input_options(column, scope, :object => record)
         attributes = field_attributes(column, record)
         attributes[:class] = "#{attributes[:class]} #{col_class}" if col_class.present?
-        field =
-          if only_value
-            content_tag(:span, get_column_value(record, column), column_options.except(:name, :object)) <<
-              hidden_field(:record, column.association ? column.association.foreign_key : column.name, column_options)
-          else
-            active_scaffold_input_for column, scope, column_options
+        if only_value
+          field = content_tag(:span, get_column_value(record, column), column_options.except(:name, :object))
+          if column.association.nil? || column.association.belongs_to?
+            # hidden field probably not needed, but leaving it just in case
+            # but it isn't working for assocations which are not belongs_to
+            method = column.association ? column.association.foreign_key : column.name
+            field << hidden_field(:record, method, column_options)
           end
+        else
+          field = active_scaffold_input_for column, scope, column_options
+        end
 
         content_tag :dl, attributes do
           %(<dt>#{label_tag label_for(column, column_options), column.label}</dt><dd>#{field}
@@ -194,22 +198,49 @@ module ActiveScaffold
       end
 
       def form_hidden_attribute(column, record, scope = nil)
-        %(<dl style="display: none;"><dt></dt><dd>
-#{hidden_field :record, column.name, active_scaffold_input_options(column, scope).merge(:object => record)}
-</dd></dl>).html_safe
+        content_tag :dl, style: 'display: none' do
+          content_tag(:dt, '') <<
+            content_tag(:dd, form_hidden_field(column, record, scope))
+        end
+      end
+
+      def form_hidden_field(column, record, scope)
+        options = active_scaffold_input_options(column, scope)
+        if column.association.try(:collection?)
+          associated = record.send(column.name)
+          if associated.blank?
+            hidden_field_tag options[:name], '', options
+          else
+            options[:name] += '[]'
+            fields = associated.map do |r|
+              hidden_field_tag options[:name], r.id, options.merge(id: options[:id] + "_#{r.id}")
+            end
+            safe_join fields, ''
+          end
+        else
+          hidden_field :record, column.name, options.merge(object: record)
+        end
       end
 
       # Should this column be displayed in the subform?
-      def in_subform?(column, parent_record)
+      def in_subform?(column, parent_record, parent_column)
         return true unless column.association
 
-        # Polymorphic associations can't appear because they *might* be the reverse association, and because you generally don't assign an association from the polymorphic side ... I think.
-        return false if column.association.polymorphic?
+        if column.association.reverse.nil?
+          # Polymorphic associations can't appear because they *might* be the reverse association
+          return false if column.association.polymorphic?
 
-        # A column shouldn't be in the subform if it's the reverse association to the parent
-        return false if column.association.inverse_for?(parent_record.class)
-
-        true
+          # A column shouldn't be in the subform if it's the reverse association to the parent
+          !column.association.inverse_for?(parent_record.class)
+        elsif column.association.reverse == parent_column.name
+          if column.association.polymorphic?
+            column.association.name != parent_column.association.as
+          else
+            !column.association.inverse_for?(parent_record.class)
+          end
+        else
+          true
+        end
       end
 
       def column_show_add_existing(column, record = nil)
@@ -510,8 +541,6 @@ module ActiveScaffold
 
         select_tag(options[:name], options_for_select(select_options, record.send(column.name)), options)
       end
-
-      def onsubmit; end
 
       ##
       ## Form column override signatures
